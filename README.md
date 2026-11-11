@@ -15,7 +15,11 @@ The published catalog is rebuilt from scratch every time, from:
    (apt, pacman, dnf, zypper, winget).
 2. Flathub: the most popular apps and their Flatpak refs. Imported data only
    fills in what's missing, so it never overwrites hand-written entries.
-3. [whistle-recipes](https://github.com/thisisroot/whistle-recipes): one recipe
+3. The distros' own AppStream metadata (Debian, Ubuntu, Arch, Fedora, openSUSE):
+   the native package for each app. Apps are matched by their AppStream ID
+   (e.g. `org.gimp.GIMP`), never by name, so a different program that happens
+   to share a name is never picked. Hand-written package entries take priority.
+4. [whistle-recipes](https://github.com/thisisroot/whistle-recipes): one recipe
    per app, with its review status taken from `seed/recipe-status.json`.
 
 The [Publish index](.github/workflows/publish-index.yml) workflow does this on
@@ -36,6 +40,7 @@ uv sync
 uv run python manage.py migrate
 uv run python manage.py import_index seed/apps.json
 uv run python manage.py ingest_flathub --limit 1000
+uv run python manage.py ingest_appstream
 uv run python manage.py index_recipes ../whistle-recipes --status-file seed/recipe-status.json
 uv run python manage.py build_index index.json
 ```
@@ -54,6 +59,7 @@ from `../whistle-recipes`; set `WHISTLE_RECIPES_DIR` if your checkout is somewhe
 | ----------------------------------------------- | ----------------------------------------------------------- |
 | `import_index <file>`                           | Import apps and sources from an index-format JSON file.     |
 | `ingest_flathub [--limit N]`                    | Import the N most popular Flathub apps (default 500).       |
+| `ingest_appstream [--only FEED...] [--strict]`  | Add native packages from the distros' AppStream data.       |
 | `index_recipes <repo> [--status-file F]`        | Index every recipe in a whistle-recipes checkout.           |
 | `build_index <file>`                            | Write the index clients download.                           |
 
@@ -73,6 +79,7 @@ from `../whistle-recipes`; set `WHISTLE_RECIPES_DIR` if your checkout is somewhe
 - `catalog/models.py`: App, Source, Recipe, RecipeRevision, CompatReport.
 - `catalog/index.py`: build the index, and import index-format seed files.
 - `catalog/ingest.py`: the Flathub import.
+- `catalog/appstream.py`: the AppStream import (DEP-11, AppStream XML, and Fedora's RPM).
 - `catalog/recipes.py`: validate a recipe and store it as a revision.
 - `accounts/`: users, for contributors and compat reports. Installing apps never needs an account.
 

@@ -1,4 +1,5 @@
-# Rebuild the catalog from scratch (seed files + Flathub + whistle-recipes) and
+# Rebuild the catalog from scratch (seed files + Flathub + the distros' AppStream
+# data + whistle-recipes) and
 # publish it as the `index.json` asset of the `index` release, which is where
 # `whistle update` downloads it from.
 name: Publish index
@@ -30,6 +31,8 @@ jobs:
           repository: thisisroot/whistle-recipes
           path: whistle-recipes
       - uses: astral-sh/setup-uv@v6
+      # Fedora's AppStream data comes in a zstd-compressed RPM.
+      - run: command -v zstd || sudo apt-get install -y zstd
       - run: uv sync --locked
 
       - name: Test
@@ -40,6 +43,7 @@ jobs:
           uv run python manage.py migrate --noinput
           uv run python manage.py import_index seed/apps.json
           uv run python manage.py ingest_flathub --limit 1000
+          uv run python manage.py ingest_appstream
           uv run python manage.py index_recipes "$WHISTLE_RECIPES_DIR" --status-file seed/recipe-status.json
           uv run python manage.py build_index index.json
 

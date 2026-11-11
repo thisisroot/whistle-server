@@ -20,9 +20,15 @@
         },
         {
           "kind": "apt",
+          "ref": "firefox-esr",
+          "platforms": [
+            "linux:debian"
+          ]
+        },
+        {
+          "kind": "apt",
           "ref": "firefox",
           "platforms": [
-            "linux:debian",
             "linux:ubuntu"
           ]
         },

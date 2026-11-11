@@ -11,6 +11,7 @@ from whistle_recipes.validate import load
 
 from accounts.models import User
 
+from .appstream import Feed, ingest_appstream, parse_appstream_rpm, parse_appstream_xml, parse_dep11
 from .index import build_index, import_index
 from .ingest import ingest_flathub
 from .models import App, CompatReport, Recipe, Source
@@ -175,7 +176,7 @@ class IndexTests(TestCase):
             "arches": [], "version": "", "url": "", "sha256": "",
         })
         recipe = npp["recipes"][0]
-        self.assertEqual((recipe["runtime"], recipe["status"], recipe["revision"]), ("wine", "community", 1))
+        self.assertEqual((recipe["runtime"], recipe["status"], recipe["revision"]), ("wine", "verified", 1))
         self.assertEqual(recipe["spec"]["id"], "org.notepad-plus-plus.NotepadPlusPlus")
         self.assertEqual(apps["com.microsoft.Office"]["recipes"][0]["status"], "draft")
 
@@ -228,3 +229,146 @@ class FlathubIngestTests(TestCase):
         self.assertEqual(ingest_flathub(limit=5, fetch=fetch), (5, 0))
         self.assertEqual(len(calls), 2)
         self.assertEqual(App.objects.count(), 3)
+
+
+DEP11 = """File: DEP-11
+Origin: debian-stable-main
+---
+Type: desktop-application
+ID: org.gimp.GIMP
+Package: gimp
+Name:
+  C: GNU Image Manipulation Program
+Launchable:
+  desktop-id:
+  - gimp.desktop
+Url:
+  homepage: https://www.gimp.org/
+---
+Type: desktop-application
+ID: 'org.example.Quoted.desktop'
+Package: "quoted-app"
+---
+Type: addon
+ID: org.example.NoPackage
+"""
+
+APPSTREAM_XML = """<?xml version="1.0"?>
+<components version="1.0" origin="extra">
+  <component type="desktop-application">
+    <id>org.gimp.GIMP</id>
+    <pkgname>gimp</pkgname>
+    <launchable type="desktop-id">gimp.desktop</launchable>
+  </component>
+  <component type="desktop-application">
+    <id>firefox.desktop</id>
+    <pkgname>firefox</pkgname>
+    <launchable type="desktop-id">org.mozilla.firefox.desktop</launchable>
+  </component>
+  <component type="desktop-application">
+    <id>org.example.Bad</id>
+    <pkgname>-oops</pkgname>
+  </component>
+</components>
+"""
+
+
+def gz(text):
+    import gzip
+
+    return gzip.compress(text.encode())
+
+
+def fake_rpm(files):
+    """A minimal RPM: lead, empty signature and main headers, gzip'd newc cpio."""
+    import gzip
+    import struct
+
+    def header():
+        return b"\x8e\xad\xe8\x01" + b"\0" * 4 + struct.pack(">II", 0, 0)
+
+    def entry(name, body, mode):
+        name_b = name.encode() + b"\0"
+        fields = [0, mode, 0, 0, 1, 0, len(body), 0, 0, 0, 0, len(name_b), 0]
+        out = b"070701" + b"".join(b"%08X" % f for f in fields) + name_b
+        out += b"\0" * (-len(out) % 4) + body
+        return out + b"\0" * (-len(out) % 4)
+
+    cpio = b"".join(entry(n, b, 0o100644) for n, b in files.items()) + entry("TRAILER!!!", b"", 0)
+    lead = b"\xed\xab\xee\xdb" + b"\0" * 92
+    sig = header()
+    sig += b"\0" * (-(len(lead) + len(sig)) % 8)
+    return lead + sig + header() + gzip.compress(cpio)
+
+
+class AppStreamParserTests(TestCase):
+    def test_dep11(self):
+        self.assertEqual(list(parse_dep11(gz(DEP11))), [
+            ("org.gimp.GIMP", "gimp", ["gimp.desktop"]),
+            ("org.example.Quoted.desktop", "quoted-app", []),
+        ])
+
+    def test_xml(self):
+        parsed = list(parse_appstream_xml(gz(APPSTREAM_XML)))
+        self.assertEqual(parsed[0], ("org.gimp.GIMP", "gimp", ["gimp.desktop"]))
+        self.assertEqual(parsed[1], ("firefox.desktop", "firefox", ["org.mozilla.firefox.desktop"]))
+
+    def test_rpm(self):
+        rpm = fake_rpm({
+            "./usr/share/doc/README": b"hi",
+            "./usr/share/swcatalog/xml/fedora.xml.gz": gz(APPSTREAM_XML),
+        })
+        self.assertEqual(len(list(parse_appstream_rpm(rpm))), 3)
+        with self.assertRaisesMessage(ValueError, "no AppStream catalog"):
+            list(parse_appstream_rpm(fake_rpm({"./usr/share/doc/README": b"hi"})))
+        with self.assertRaisesMessage(ValueError, "not an RPM"):
+            list(parse_appstream_rpm(b"nope"))
+
+
+class AppStreamIngestTests(TestCase):
+    def setUp(self):
+        for app_id, name in [("org.gimp.GIMP", "GIMP"), ("org.mozilla.firefox", "Firefox"), ("org.example.Bad", "Bad")]:
+            App.objects.create(id=app_id, name=name)
+        self.files = {"https://x/debian": gz(DEP11), "https://x/arch": gz(APPSTREAM_XML)}
+
+    def feeds(self, broken=()):
+        def urls(name):
+            return lambda fetch: [f"https://x/{name}"]
+
+        return [
+            Feed("debian", "apt", "linux:debian", urls("debian"), parse_dep11),
+            Feed("ubuntu", "apt", "linux:ubuntu", urls("debian"), parse_dep11),
+            Feed("arch", "pacman", "linux:arch", urls("broken" if "arch" in broken else "arch"), parse_appstream_xml),
+        ]
+
+    def fetch(self, url):
+        if url not in self.files:
+            raise OSError(f"404 {url}")
+        return self.files[url]
+
+    def test_matches_by_component_and_desktop_id(self):
+        results = ingest_appstream(self.feeds(), fetch=self.fetch)
+        self.assertEqual(results, {"debian": 1, "ubuntu": 1, "arch": 2})
+        gimp_apt = Source.objects.get(app_id="org.gimp.GIMP", kind="apt")
+        self.assertEqual((gimp_apt.ref, gimp_apt.platforms, gimp_apt.origin), ("gimp", ["linux:debian", "linux:ubuntu"], "appstream"))
+        # Matched through the launchable desktop id.
+        self.assertEqual(Source.objects.get(app_id="org.mozilla.firefox", kind="pacman").ref, "firefox")
+        # Package names that could pass as options are dropped.
+        self.assertFalse(Source.objects.filter(app_id="org.example.Bad").exists())
+
+    def test_hand_written_sources_win(self):
+        Source.objects.create(app_id="org.gimp.GIMP", kind="apt", ref="gimp-custom", platforms=["linux:debian"], origin="manual")
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        self.assertEqual(list(Source.objects.filter(app_id="org.gimp.GIMP", kind="apt").values_list("ref", flat=True)), ["gimp-custom"])
+
+    def test_failed_feed_keeps_previous_sources(self):
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        results = ingest_appstream(self.feeds(broken=["arch"]), fetch=self.fetch)
+        self.assertTrue(results["arch"].startswith("failed"))
+        self.assertEqual(Source.objects.filter(kind="pacman").count(), 2)
+
+    def test_rerun_drops_packages_that_disappeared(self):
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        self.files["https://x/arch"] = gz("<components></components>")
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        self.assertFalse(Source.objects.filter(kind="pacman").exists())

@@ -259,20 +259,11 @@ wheels = [
 [[package]]
 name = "whistle-recipes"
 version = "0.1.0"
-source = { editable = "../whistle-recipes" }
+source = { git = "https://github.com/thisisroot/whistle-recipes.git?branch=main#72e84ef8e9218a8e04e0fed6dae750db0a325aea" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "jsonschema", specifier = ">=4.19" },
-    { name = "pyyaml", specifier = ">=6" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "whistle-server"
@@ -286,5 +277,5 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "django", specifier = ">=5.2,<7" },
-    { name = "whistle-recipes", editable = "../whistle-recipes" },
+    { name = "whistle-recipes", git = "https://github.com/thisisroot/whistle-recipes.git?branch=main" },
 ]

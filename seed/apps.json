@@ -1,0 +1,314 @@
+{
+  "format": 1,
+  "generated_at": "",
+  "apps": [
+    {
+      "id": "org.mozilla.firefox",
+      "name": "Firefox",
+      "summary": "Web browser from Mozilla",
+      "categories": [
+        "Network",
+        "WebBrowser"
+      ],
+      "sources": [
+        {
+          "kind": "pacman",
+          "ref": "firefox",
+          "platforms": [
+            "linux:arch"
+          ]
+        },
+        {
+          "kind": "apt",
+          "ref": "firefox",
+          "platforms": [
+            "linux:debian",
+            "linux:ubuntu"
+          ]
+        },
+        {
+          "kind": "dnf",
+          "ref": "firefox",
+          "platforms": [
+            "linux:fedora"
+          ]
+        },
+        {
+          "kind": "zypper",
+          "ref": "MozillaFirefox",
+          "platforms": [
+            "linux:opensuse"
+          ]
+        },
+        {
+          "kind": "flatpak",
+          "ref": "org.mozilla.firefox",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "kind": "winget",
+          "ref": "Mozilla.Firefox",
+          "platforms": [
+            "windows"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org.gimp.GIMP",
+      "name": "GIMP",
+      "summary": "GNU Image Manipulation Program",
+      "categories": [
+        "Graphics",
+        "2DGraphics",
+        "RasterGraphics"
+      ],
+      "sources": [
+        {
+          "kind": "pacman",
+          "ref": "gimp",
+          "platforms": [
+            "linux:arch"
+          ]
+        },
+        {
+          "kind": "apt",
+          "ref": "gimp",
+          "platforms": [
+            "linux:debian",
+            "linux:ubuntu"
+          ]
+        },
+        {
+          "kind": "dnf",
+          "ref": "gimp",
+          "platforms": [
+            "linux:fedora"
+          ]
+        },
+        {
+          "kind": "zypper",
+          "ref": "gimp",
+          "platforms": [
+            "linux:opensuse"
+          ]
+        },
+        {
+          "kind": "flatpak",
+          "ref": "org.gimp.GIMP",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "kind": "winget",
+          "ref": "GIMP.GIMP.3",
+          "platforms": [
+            "windows"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org.videolan.VLC",
+      "name": "VLC",
+      "summary": "Media player for most audio and video formats",
+      "categories": [
+        "AudioVideo",
+        "Player"
+      ],
+      "sources": [
+        {
+          "kind": "pacman",
+          "ref": "vlc",
+          "platforms": [
+            "linux:arch"
+          ]
+        },
+        {
+          "kind": "apt",
+          "ref": "vlc",
+          "platforms": [
+            "linux:debian",
+            "linux:ubuntu"
+          ]
+        },
+        {
+          "kind": "dnf",
+          "ref": "vlc",
+          "platforms": [
+            "linux:fedora"
+          ]
+        },
+        {
+          "kind": "zypper",
+          "ref": "vlc",
+          "platforms": [
+            "linux:opensuse"
+          ]
+        },
+        {
+          "kind": "flatpak",
+          "ref": "org.videolan.VLC",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "kind": "winget",
+          "ref": "VideoLAN.VLC",
+          "platforms": [
+            "windows"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org.libreoffice.LibreOffice",
+      "name": "LibreOffice",
+      "summary": "Office suite",
+      "categories": [
+        "Office"
+      ],
+      "sources": [
+        {
+          "kind": "pacman",
+          "ref": "libreoffice-fresh",
+          "platforms": [
+            "linux:arch"
+          ]
+        },
+        {
+          "kind": "apt",
+          "ref": "libreoffice",
+          "platforms": [
+            "linux:debian",
+            "linux:ubuntu"
+          ]
+        },
+        {
+          "kind": "dnf",
+          "ref": "libreoffice",
+          "platforms": [
+            "linux:fedora"
+          ]
+        },
+        {
+          "kind": "zypper",
+          "ref": "libreoffice",
+          "platforms": [
+            "linux:opensuse"
+          ]
+        },
+        {
+          "kind": "flatpak",
+          "ref": "org.libreoffice.LibreOffice",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "kind": "winget",
+          "ref": "TheDocumentFoundation.LibreOffice",
+          "platforms": [
+            "windows"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "com.spotify.Client",
+      "name": "Spotify",
+      "summary": "Music streaming client",
+      "categories": [
+        "Audio",
+        "Music"
+      ],
+      "sources": [
+        {
+          "kind": "flatpak",
+          "ref": "com.spotify.Client",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "kind": "winget",
+          "ref": "Spotify.Spotify",
+          "platforms": [
+            "windows"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org.notepad-plus-plus.NotepadPlusPlus",
+      "name": "Notepad++",
+      "summary": "Source code editor for Windows",
+      "categories": [
+        "Development",
+        "TextEditor"
+      ],
+      "sources": [
+        {
+          "kind": "winget",
+          "ref": "Notepad++.Notepad++",
+          "platforms": [
+            "windows"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "com.microsoft.Office",
+      "name": "Microsoft Office",
+      "summary": "Word, Excel and PowerPoint",
+      "categories": [
+        "Office"
+      ],
+      "sources": []
+    },
+    {
+      "id": "org.gnome.Builder",
+      "name": "GNOME Builder",
+      "summary": "IDE for GNOME",
+      "categories": [
+        "Development",
+        "IDE"
+      ],
+      "sources": [
+        {
+          "kind": "pacman",
+          "ref": "gnome-builder",
+          "platforms": [
+            "linux:arch"
+          ]
+        },
+        {
+          "kind": "apt",
+          "ref": "gnome-builder",
+          "platforms": [
+            "linux:debian",
+            "linux:ubuntu"
+          ]
+        },
+        {
+          "kind": "dnf",
+          "ref": "gnome-builder",
+          "platforms": [
+            "linux:fedora"
+          ]
+        },
+        {
+          "kind": "flatpak",
+          "ref": "org.gnome.Builder",
+          "platforms": [
+            "linux"
+          ]
+        }
+      ]
+    }
+  ]
+}

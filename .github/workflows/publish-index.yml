@@ -1,0 +1,53 @@
+# Rebuild the catalog from scratch (seed files + Flathub + whistle-recipes) and
+# publish it as the `index.json` asset of the `index` release, which is where
+# `whistle update` downloads it from.
+name: Publish index
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-index
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      WHISTLE_RECIPES_DIR: ${{ github.workspace }}/whistle-recipes
+      WHISTLE_SQLITE_PATH: ${{ runner.temp }}/catalog.sqlite3
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: thisisroot/whistle-recipes
+          path: whistle-recipes
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+
+      - name: Test
+        run: uv run python manage.py test
+
+      - name: Build the catalog
+        run: |
+          uv run python manage.py migrate --noinput
+          uv run python manage.py import_index seed/apps.json
+          uv run python manage.py ingest_flathub --limit 1000
+          uv run python manage.py index_recipes "$WHISTLE_RECIPES_DIR" --status-file seed/recipe-status.json
+          uv run python manage.py build_index index.json
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view index >/dev/null 2>&1 || gh release create index \
+            --title "Catalog index" --latest=false \
+            --notes "Rebuilt automatically. Clients fetch index.json from here."
+          gh release upload index index.json --clobber

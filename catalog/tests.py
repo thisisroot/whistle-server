@@ -1,16 +1,25 @@
+import json
+import os
+from io import StringIO
 from pathlib import Path
 
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import IntegrityError
 from django.test import TestCase
 from whistle_recipes.validate import load
 
 from accounts.models import User
 
+from .index import build_index, import_index
+from .ingest import ingest_flathub
 from .models import App, CompatReport, Recipe, Source
 from .recipes import RecipeInvalid, index_recipe
 
-RECIPES = Path(__file__).resolve().parents[2] / "whistle-recipes" / "recipes"
+# The whistle-recipes checkout; by default it sits next to this repo.
+RECIPES_REPO = Path(os.environ.get("WHISTLE_RECIPES_DIR") or Path(__file__).resolve().parents[2] / "whistle-recipes")
+RECIPES = RECIPES_REPO / "recipes"
+SEED = Path(__file__).resolve().parents[1] / "seed"
 COMMIT_A = "a" * 40
 COMMIT_B = "b" * 40
 
@@ -132,3 +141,90 @@ class CompatReportTests(TestCase):
 
     def test_source_report_on_windows(self):
         self.report(recipe_revision=None, source=self.source, host_os="windows", distro="", runtime="native").full_clean()
+
+
+class IndexTests(TestCase):
+    def setUp(self):
+        import_index(json.loads((SEED / "apps.json").read_text()))
+        statuses = SEED / "recipe-status.json"
+        call_command(
+            "index_recipes", str(RECIPES_REPO), commit=COMMIT_A, status_file=statuses, stdout=StringIO()
+        )
+
+    def test_seed_imports_as_manual(self):
+        firefox = App.objects.get(pk="org.mozilla.firefox")
+        self.assertEqual(firefox.sources.get(kind="apt").platforms, ["linux:debian", "linux:ubuntu"])
+        self.assertTrue(all(s.origin == "manual" for s in Source.objects.all()))
+
+    def test_reimport_is_idempotent(self):
+        before = Source.objects.count()
+        import_index(json.loads((SEED / "apps.json").read_text()))
+        self.assertEqual(Source.objects.count(), before)
+
+    def test_import_rejects_bad_ids(self):
+        with self.assertRaises(ValidationError):
+            import_index({"format": 1, "apps": [{"id": "firefox", "name": "Firefox"}]})
+
+    def test_index_matches_the_client_contract(self):
+        index = build_index()
+        self.assertEqual(index["format"], 1)
+        apps = {a["id"]: a for a in index["apps"]}
+        npp = apps["org.notepad-plus-plus.NotepadPlusPlus"]
+        self.assertEqual(npp["sources"][0], {
+            "kind": "winget", "ref": "Notepad++.Notepad++", "platforms": ["windows"],
+            "arches": [], "version": "", "url": "", "sha256": "",
+        })
+        recipe = npp["recipes"][0]
+        self.assertEqual((recipe["runtime"], recipe["status"], recipe["revision"]), ("wine", "community", 1))
+        self.assertEqual(recipe["spec"]["id"], "org.notepad-plus-plus.NotepadPlusPlus")
+        self.assertEqual(apps["com.microsoft.Office"]["recipes"][0]["status"], "draft")
+
+    def test_index_leaves_out_retired_recipes_and_empty_apps(self):
+        Recipe.objects.filter(pk="com.microsoft.Office2016").update(status=Recipe.Status.RETIRED)
+        App.objects.create(id="org.example.Nothing", name="Nothing")
+        ids = {a["id"] for a in build_index()["apps"]}
+        self.assertNotIn("com.microsoft.Office", ids)
+        self.assertNotIn("org.example.Nothing", ids)
+
+
+class FlathubIngestTests(TestCase):
+    def fake(self, hits, pages=1):
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            return {"hits": hits, "totalPages": pages}
+
+        return fetch, calls
+
+    def test_creates_apps_and_flatpak_sources(self):
+        fetch, _ = self.fake([
+            {"app_id": "org.gimp.GIMP", "name": "GIMP", "summary": "Edit images", "type": "desktop-application",
+             "main_categories": "graphics", "sub_categories": ["RasterGraphics"], "project_license": "GPL-3.0+",
+             "icon": "https://dl.flathub.org/x.png"},
+            {"app_id": "org.freedesktop.Platform", "type": "runtime"},
+            {"app_id": "not-reverse-dns", "type": "desktop-application"},
+        ])
+        self.assertEqual(ingest_flathub(limit=10, fetch=fetch), (1, 2))
+        app = App.objects.get(pk="org.gimp.GIMP")
+        self.assertEqual(app.categories, ["Graphics", "RasterGraphics"])
+        source = app.sources.get()
+        self.assertEqual((source.kind, source.ref, source.origin), ("flatpak", "org.gimp.GIMP", "flathub"))
+        self.assertIsNotNone(source.last_seen_at)
+
+    def test_keeps_curated_text_and_manual_sources(self):
+        app = App.objects.create(id="org.gimp.GIMP", name="GIMP", summary="Curated summary")
+        Source.objects.create(app=app, kind="flatpak", ref="org.gimp.GIMP", platforms=["linux:arch"], origin="manual")
+        fetch, _ = self.fake([{"app_id": "org.gimp.GIMP", "name": "GIMP 3", "summary": "Upstream summary",
+                               "project_license": "LicenseRef-proprietary=https://x"}])
+        ingest_flathub(limit=10, fetch=fetch)
+        app.refresh_from_db()
+        self.assertEqual((app.name, app.summary, app.license), ("GIMP", "Curated summary", "LicenseRef-proprietary"))
+        self.assertEqual(app.sources.get().platforms, ["linux:arch"])
+
+    def test_stops_at_limit_across_pages(self):
+        hits = [{"app_id": f"org.example.App{i}", "name": f"App {i}"} for i in range(3)]
+        fetch, calls = self.fake(hits, pages=5)
+        self.assertEqual(ingest_flathub(limit=5, fetch=fetch), (5, 0))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(App.objects.count(), 3)

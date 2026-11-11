@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WHISTLE_RECIPES_DIR: ${{ github.workspace }}/whistle-recipes
-      WHISTLE_SQLITE_PATH: ${{ runner.temp }}/catalog.sqlite3
+      WHISTLE_SQLITE_PATH: ${{ github.workspace }}/catalog.sqlite3
     steps:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5

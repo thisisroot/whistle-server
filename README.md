@@ -25,16 +25,18 @@
   <a href="#settings">Settings</a>
 </p>
 
-The server builds one file: **`index.json`**, the catalog the `whistle` client
+The server builds **`catalog.json`**, the catalog the `whistle` client
 downloads with `whistle update`. The current one is always at
-[`releases/download/index/index.json`](https://github.com/thisisroot/whistle-server/releases/download/index/index.json).
+[`releases/download/index/catalog.json`](https://github.com/thisisroot/whistle-server/releases/download/index/catalog.json)
+(clients fetch the `.gz`, 2.7 MB).
 
 | | |
 | --- | --- |
-| **Apps** | about 1,000 |
-| **With a native package** | about 380 (Debian, Ubuntu, Arch, Fedora, openSUSE) |
-| **Flatpak** | almost all, from Flathub |
-| **Windows apps** | through [whistle-recipes](https://github.com/thisisroot/whistle-recipes) |
+| **Apps** | about 17,700 |
+| **Linux apps** | about 5,800: all of Flathub, plus about 2,400 that only the distros ship |
+| **With a native package** | 900 to 2,150 per distro (Debian, Ubuntu, Arch, Fedora, openSUSE) |
+| **Windows apps** | about 12,400, from winget, as generated recipes, plus the reviewed ones in [whistle-recipes](https://github.com/thisisroot/whistle-recipes) |
+| **Icons and screenshots** | about three quarters of the Linux apps |
 | **Rebuilt** | on every push to `main` and once a day |
 
 ## How the catalog is built
@@ -42,32 +44,45 @@ downloads with `whistle update`. The current one is always at
 ```mermaid
 flowchart LR
     S["seed/apps.json<br/>hand-maintained"] --> DB[("Catalog DB")]
-    F["Flathub<br/>popular apps"] --> DB
+    F["Flathub<br/>all apps"] --> DB
     A["Distro AppStream data<br/>Debian · Ubuntu · Arch<br/>Fedora · openSUSE"] --> DB
     R["whistle-recipes"] --> DB
-    DB --> I["index.json"]
+    W["winget-pkgs<br/>Windows apps"] --> DB
+    DB --> I["catalog.json"]
     I --> G["GitHub release 'index'"]
     G --> C["whistle update"]
 ```
 
-The catalog is rebuilt from scratch every time, from four sources:
+The catalog is rebuilt from scratch every time, from five sources:
 
 1. **`seed/apps.json`**: hand-maintained apps and their package names (apt,
    pacman, dnf, zypper, winget). Always wins over imported data.
-2. **Flathub**: the most popular apps, with their names, icons, summaries and
-   Flatpak refs. It only fills in what's missing.
+2. **Flathub**: every app, with its name, icon, summary, homepage, screenshots
+   and Flatpak ref. It only fills in what's missing.
 3. **The distros' own AppStream metadata**: the package that ships each app on
-   Debian, Ubuntu, Arch, Fedora and openSUSE. Apps are matched by their
+   Debian, Ubuntu, Arch, Fedora and openSUSE, plus the desktop apps that only
+   the distros ship, with their icons and screenshots. Apps are matched by their
    AppStream ID (like `org.gimp.GIMP`), never by name, so a different program
    that happens to share a name is never picked. If a distro's feed is down, that
    distro keeps its previous data.
 4. **[whistle-recipes](https://github.com/thisisroot/whistle-recipes)**: one
-   recipe per app, with its review status from `seed/recipe-status.json`.
+   reviewed recipe per app, with its status from `seed/recipe-status.json`.
+5. **[winget-pkgs](https://github.com/microsoft/winget-pkgs)** (MIT): every
+   Windows package with an installer Wine can run (Inno Setup, NSIS, MSI, Burn,
+   portable, or an `.exe` with known silent switches) becomes an `untested`
+   recipe. Only the newest version of each package is downloaded, without
+   history: about 60,000 small files, in under a minute. A Windows app joins the
+   Linux entry of the same app when both the name and the website match, and a
+   reviewed recipe always wins over a generated one.
 
 The [Publish index](.github/workflows/publish-index.yml) workflow runs the
-tests, builds the catalog, signs it and uploads `index.json` and
-`index.json.minisig` to the
-[`index` release](https://github.com/thisisroot/whistle-server/releases/tag/index).
+tests, builds the catalog, signs it and uploads it to the
+[`index` release](https://github.com/thisisroot/whistle-server/releases/tag/index):
+
+| File | For |
+| --- | --- |
+| `catalog.json`, `catalog.json.gz`, `catalog.json.minisig` | Whistle 0.2 and newer |
+| `index.json`, `index.json.minisig` | Whistle 0.1, which rejects recipe statuses it doesn't know: no generated recipes and no Windows-only apps |
 
 ### Signing
 
@@ -77,7 +92,7 @@ the workflow signs with the `MINISIGN_SECRET_KEY` repository secret and fails
 if it isn't set. To check a catalog yourself:
 
 ```sh
-minisign -V -p keys/index.pub -m index.json
+minisign -V -p keys/index.pub -m catalog.json
 ```
 
 To publish your own catalog, generate a key pair with `minisign -G`, sign with
@@ -112,13 +127,14 @@ You need [uv](https://docs.astral.sh/uv/), and a checkout of
 uv sync
 uv run python manage.py migrate
 uv run python manage.py import_index seed/apps.json
-uv run python manage.py ingest_flathub --limit 1000
+uv run python manage.py ingest_flathub
 uv run python manage.py ingest_appstream
 uv run python manage.py index_recipes ../whistle-recipes --status-file seed/recipe-status.json
-uv run python manage.py build_index index.json
+uv run python manage.py ingest_winget ~/winget-pkgs     # cloned there on the first run
+uv run python manage.py build_index catalog.json
 ```
 
-Point the client at the result with `whistle update --from index.json`.
+Point the client at the result with `whistle update --from catalog.json`.
 
 To browse the data, create an admin user with
 `uv run python manage.py createsuperuser`, run `uv run python manage.py runserver`
@@ -133,10 +149,11 @@ package or the `zstd` command.
 | Command | What it does |
 | --- | --- |
 | `import_index <file>` | Import apps and sources from an index-format JSON file. |
-| `ingest_flathub [--limit N]` | Import the N most popular Flathub apps (default 500). |
-| `ingest_appstream [--only FEED...] [--strict]` | Add native packages from the distros' AppStream data. `--strict` fails if any feed fails. |
+| `ingest_flathub [--limit N] [--no-media]` | Import all Flathub apps (or the N most popular), then their screenshots and homepages. |
+| `ingest_appstream [--only FEED...] [--strict]` | Add native packages, distro-only apps, icons and screenshots from the distros' AppStream data. `--strict` fails if any feed fails. |
 | `index_recipes <repo> [--status-file F]` | Index every recipe in a whistle-recipes checkout. |
-| `build_index <file>` | Write the index clients download. |
+| `ingest_winget <dir> [--no-update] [--limit N]` | Clone or update winget-pkgs in `<dir>`, and generate `untested` recipes for its Windows apps. |
+| `build_index <file> [--exclude-status S] [--exclude-kind K]` | Write the index clients download; the exclusions make the one for older clients. |
 
 ## Settings
 
@@ -156,7 +173,8 @@ package or the `zstd` command.
 | [`catalog/models.py`](catalog/models.py) | App, Source, Recipe, RecipeRevision, CompatReport. |
 | [`catalog/index.py`](catalog/index.py) | Build the index, and import index-format seed files. |
 | [`catalog/ingest.py`](catalog/ingest.py) | The Flathub import. |
-| [`catalog/appstream.py`](catalog/appstream.py) | The AppStream import: DEP-11, AppStream XML and Fedora's RPM. |
+| [`catalog/appstream.py`](catalog/appstream.py) | The AppStream import: DEP-11, AppStream XML and Fedora's RPM; icons and screenshots. |
+| [`catalog/winget.py`](catalog/winget.py) | The winget import: picking an installer and generating its recipe. |
 | [`catalog/recipes.py`](catalog/recipes.py) | Validate a recipe and store it as a revision. |
 | [`accounts/`](accounts) | Users, for contributors and compatibility reports. Installing apps never needs an account. |
 | [`seed/`](seed) | The hand-maintained part of the catalog. |

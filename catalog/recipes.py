@@ -22,13 +22,14 @@ def canonical_sha256(spec):
 
 
 @transaction.atomic
-def index_recipe(spec, *, path, git_commit):
+def index_recipe(spec, *, path, git_commit, from_file=True):
     """Validate a recipe and store it as a new revision.
 
     Idempotent: indexing an unchanged spec returns its existing revision (and
-    makes it current again, which handles reverts).
+    makes it current again, which handles reverts). `from_file=False` is for
+    generated recipes, whose id can't match a file name.
     """
-    errors = validate(spec, path=path)
+    errors = validate(spec, path=path if from_file else None)
     if errors:
         raise RecipeInvalid(errors)
     try:

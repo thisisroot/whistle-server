@@ -12,19 +12,23 @@ from django.utils import timezone
 from .models import App, Recipe, Source
 
 FORMAT = 1
-APP_FIELDS = ["name", "summary", "categories", "icon_url", "homepage", "license"]
+APP_FIELDS = ["name", "summary", "categories", "icon_url", "screenshots", "homepage", "license"]
 SOURCE_FIELDS = ["platforms", "arches", "version", "url", "sha256"]
 
 
-def build_index():
+def build_index(exclude_statuses=(), exclude_kinds=()):
+    """The index clients download. `exclude_statuses` and `exclude_kinds`
+    leave out recipes and sources, for clients too old to use them; apps left
+    with nothing are left out too."""
     live_recipes = (
         Recipe.objects.exclude(status=Recipe.Status.RETIRED)
+        .exclude(status__in=exclude_statuses)
         .filter(current_revision__isnull=False)
         .select_related("current_revision")
         .order_by("id")
     )
     apps = App.objects.order_by("id").prefetch_related(
-        Prefetch("sources", queryset=Source.objects.order_by("kind", "ref")),
+        Prefetch("sources", queryset=Source.objects.exclude(kind__in=exclude_kinds).order_by("kind", "ref")),
         Prefetch("recipes", queryset=live_recipes),
     )
     out = []

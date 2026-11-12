@@ -26,16 +26,19 @@ def fetch_json(url):
         return json.load(response)
 
 
-def ingest_flathub(limit=500, fetch=fetch_json):
-    """Import the `limit` most popular Flathub apps. Returns (seen, skipped)."""
+def ingest_flathub(limit=None, fetch=fetch_json):
+    """Import Flathub's apps, most popular first: all of them, or the first
+    `limit`. Returns (seen, skipped)."""
     now = timezone.now()
-    per_page = min(limit, 250)
+    per_page = min(limit or 250, 250)
     seen = skipped = 0
     page = 1
-    while seen + skipped < limit:
+    while limit is None or seen + skipped < limit:
         data = fetch(FLATHUB_POPULAR.format(page=page, per_page=per_page))
         hits = data.get("hits") or []
-        for hit in hits[: limit - seen - skipped]:
+        if limit is not None:
+            hits = hits[: limit - seen - skipped]
+        for hit in hits:
             if _upsert_flathub(hit, now):
                 seen += 1
             else:

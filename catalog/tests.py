@@ -1,11 +1,13 @@
 import json
 import os
+import shutil
 from io import StringIO
 from pathlib import Path
 
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.db import IntegrityError
+import yaml
 from django.test import TestCase
 from whistle_recipes.validate import load
 
@@ -16,6 +18,7 @@ from .index import build_index, import_index
 from .ingest import ingest_flathub
 from .models import App, CompatReport, Recipe, Source
 from .recipes import RecipeInvalid, index_recipe
+from .winget import ingest_winget, make_recipe, newest_version_dirs, pick_installer, site
 
 # The whistle-recipes checkout; by default it sits next to this repo.
 RECIPES_REPO = Path(os.environ.get("WHISTLE_RECIPES_DIR") or Path(__file__).resolve().parents[2] / "whistle-recipes")
@@ -231,9 +234,16 @@ class FlathubIngestTests(TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(App.objects.count(), 3)
 
+    def test_without_a_limit_reads_every_page(self):
+        hits = [{"app_id": f"org.example.App{i}", "name": f"App {i}"} for i in range(3)]
+        fetch, calls = self.fake(hits, pages=4)
+        self.assertEqual(ingest_flathub(fetch=fetch), (12, 0))
+        self.assertEqual(len(calls), 4)
+
 
 DEP11 = """File: DEP-11
 Origin: debian-stable-main
+MediaBaseUrl: https://appstream.example.org/media/
 ---
 Type: desktop-application
 ID: org.gimp.GIMP
@@ -245,10 +255,51 @@ Launchable:
   - gimp.desktop
 Url:
   homepage: https://www.gimp.org/
+Icon:
+  cached:
+  - name: gimp.png
+    width: 64
+  remote:
+  - url: org/gimp/icons/64x64/gimp.png
+    width: 64
+  - url: org/gimp/icons/128x128/gimp.png
+    width: 128
+Screenshots:
+- thumbnails:
+  - url: org/gimp/screenshots/second_752.png
+    width: 752
+- default: true
+  thumbnails:
+  - url: org/gimp/screenshots/main_1248.png
+    width: 1248
+  - url: org/gimp/screenshots/main_624.png
+    width: 624
+  source-image:
+    url: org/gimp/screenshots/main_orig.png
+    width: 3840
 ---
 Type: desktop-application
 ID: 'org.example.Quoted.desktop'
 Package: "quoted-app"
+---
+Type: desktop-application
+ID: org.example.DistroOnly
+Package: distro-only
+Name:
+  C: Distro Only
+  de: Nur Distro
+Summary:
+  C: Only in the distro's repos
+Categories:
+- Utility
+- Bad Category
+ProjectLicense: GPL-2.0+
+---
+Type: desktop-application
+ID: homebank.desktop
+Package: homebank
+Name:
+  C: HomeBank
 ---
 Type: addon
 ID: org.example.NoPackage
@@ -259,6 +310,22 @@ APPSTREAM_XML = """<?xml version="1.0"?>
   <component type="desktop-application">
     <id>org.gimp.GIMP</id>
     <pkgname>gimp</pkgname>
+    <name xml:lang="de">GIMP (de)</name>
+    <name>GIMP</name>
+    <summary>Edit images</summary>
+    <categories><category>Graphics</category></categories>
+    <project_license>GPL-3.0+</project_license>
+    <url type="homepage">https://www.gimp.org/</url>
+    <icon type="cached" width="64">gimp.png</icon>
+    <icon type="remote" width="128">https://dl.example.org/gimp-128.png</icon>
+    <screenshots>
+      <screenshot type="default">
+        <image type="source" width="1920">https://dl.example.org/shot_orig.png</image>
+        <image type="thumbnail" width="1248">https://dl.example.org/shot_1248.png</image>
+        <image type="thumbnail" width="624">https://dl.example.org/shot_624.png</image>
+      </screenshot>
+      <screenshot><image type="source" width="800">http://insecure.example.org/x.png</image></screenshot>
+    </screenshots>
     <launchable type="desktop-id">gimp.desktop</launchable>
   </component>
   <component type="desktop-application">
@@ -304,15 +371,35 @@ def fake_rpm(files):
 
 class AppStreamParserTests(TestCase):
     def test_dep11(self):
-        self.assertEqual(list(parse_dep11(gz(DEP11))), [
+        parsed = list(parse_dep11(gz(DEP11)))
+        self.assertEqual([c[:3] for c in parsed], [
             ("org.gimp.GIMP", "gimp", ["gimp.desktop"]),
             ("org.example.Quoted.desktop", "quoted-app", []),
+            ("org.example.DistroOnly", "distro-only", []),
+            ("homebank.desktop", "homebank", []),
         ])
+        gimp, _, only, _ = parsed
+        self.assertEqual((gimp.type, gimp.name, gimp.homepage), ("desktop-application", "GNU Image Manipulation Program", "https://www.gimp.org/"))
+        self.assertEqual((only.name, only.summary, only.license), ("Distro Only", "Only in the distro's repos", "GPL-2.0+"))
+        self.assertEqual(only.categories, ["Utility", "Bad Category"])
+        # Media URLs are made absolute; the default screenshot comes first, at about 1248 px.
+        self.assertEqual(gimp.icon, "https://appstream.example.org/media/org/gimp/icons/128x128/gimp.png")
+        self.assertEqual(gimp.screenshots, [
+            "https://appstream.example.org/media/org/gimp/screenshots/main_1248.png",
+            "https://appstream.example.org/media/org/gimp/screenshots/second_752.png",
+        ])
+        self.assertEqual((only.icon, only.screenshots), ("", []))
 
     def test_xml(self):
         parsed = list(parse_appstream_xml(gz(APPSTREAM_XML)))
-        self.assertEqual(parsed[0], ("org.gimp.GIMP", "gimp", ["gimp.desktop"]))
-        self.assertEqual(parsed[1], ("firefox.desktop", "firefox", ["org.mozilla.firefox.desktop"]))
+        self.assertEqual(parsed[0][:3], ("org.gimp.GIMP", "gimp", ["gimp.desktop"]))
+        self.assertEqual(parsed[1][:3], ("firefox.desktop", "firefox", ["org.mozilla.firefox.desktop"]))
+        gimp = parsed[0]
+        self.assertEqual((gimp.name, gimp.summary, gimp.categories), ("GIMP", "Edit images", ["Graphics"]))
+        self.assertEqual((gimp.license, gimp.homepage), ("GPL-3.0+", "https://www.gimp.org/"))
+        self.assertEqual(gimp.icon, "https://dl.example.org/gimp-128.png")
+        # Plain-HTTP images are dropped.
+        self.assertEqual(gimp.screenshots, ["https://dl.example.org/shot_1248.png"])
 
     def test_rpm(self):
         rpm = fake_rpm({
@@ -349,13 +436,36 @@ class AppStreamIngestTests(TestCase):
 
     def test_matches_by_component_and_desktop_id(self):
         results = ingest_appstream(self.feeds(), fetch=self.fetch)
-        self.assertEqual(results, {"debian": 1, "ubuntu": 1, "arch": 2})
+        self.assertEqual(results, {"new apps": 2, "media": 1, "debian": 3, "ubuntu": 3, "arch": 2})
         gimp_apt = Source.objects.get(app_id="org.gimp.GIMP", kind="apt")
         self.assertEqual((gimp_apt.ref, gimp_apt.platforms, gimp_apt.origin), ("gimp", ["linux:debian", "linux:ubuntu"], "appstream"))
         # Matched through the launchable desktop id.
         self.assertEqual(Source.objects.get(app_id="org.mozilla.firefox", kind="pacman").ref, "firefox")
         # Package names that could pass as options are dropped.
         self.assertFalse(Source.objects.filter(app_id="org.example.Bad").exists())
+
+    def test_adds_apps_only_the_distros_ship(self):
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        app = App.objects.get(pk="org.example.DistroOnly")
+        self.assertEqual((app.name, app.summary, app.license), ("Distro Only", "Only in the distro's repos", "GPL-2.0+"))
+        self.assertEqual(app.categories, ["Utility"])
+        self.assertEqual(app.sources.get().platforms, ["linux:debian", "linux:ubuntu"])
+        # Known apps aren't duplicated, nameless components and invalid packages aren't added.
+        self.assertFalse(App.objects.filter(pk__in=["firefox", "org.example.Quoted"]).exists())
+        # Old-style ids keep their .desktop suffix.
+        self.assertEqual(App.objects.get(pk="homebank.desktop").sources.get().ref, "homebank")
+        self.assertEqual(App.objects.count(), 5)
+        # A second run finds the apps it created instead of adding them again.
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        self.assertEqual(App.objects.count(), 5)
+
+    def test_fills_missing_media_without_overwriting(self):
+        App.objects.filter(pk="org.gimp.GIMP").update(icon_url="https://curated.example.org/gimp.png")
+        ingest_appstream(self.feeds(), fetch=self.fetch)
+        gimp = App.objects.get(pk="org.gimp.GIMP")
+        self.assertEqual(gimp.icon_url, "https://curated.example.org/gimp.png")
+        self.assertEqual(gimp.homepage, "https://www.gimp.org/")
+        self.assertEqual(len(gimp.screenshots), 2)
 
     def test_hand_written_sources_win(self):
         Source.objects.create(app_id="org.gimp.GIMP", kind="apt", ref="gimp-custom", platforms=["linux:debian"], origin="manual")
@@ -373,3 +483,137 @@ class AppStreamIngestTests(TestCase):
         self.files["https://x/arch"] = gz("<components></components>")
         ingest_appstream(self.feeds(), fetch=self.fetch)
         self.assertFalse(Source.objects.filter(kind="pacman").exists())
+
+
+class WingetTests(TestCase):
+    INSTALLER = """PackageIdentifier: {id}
+PackageVersion: {version}
+InstallerType: {type}
+InstallerSwitches:
+  Custom: /NORESTART
+Installers:
+- Architecture: arm64
+  InstallerUrl: https://example.org/arm64.exe
+  InstallerSha256: {sha}
+- Architecture: x86
+  InstallerUrl: https://example.org/x86.exe
+  InstallerSha256: {sha}
+- Architecture: x64
+  InstallerUrl: https://example.org/x64.exe
+  InstallerSha256: {sha}
+  Dependencies:
+    PackageDependencies:
+    - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+ManifestType: installer
+"""
+
+    def write_package(self, root, package, version="1.2.3", kind="nullsoft", name="Example"):
+        folder = root / "manifests" / package[0].lower() / package.replace(".", "/") / version
+        folder.mkdir(parents=True)
+        (folder / f"{package}.installer.yaml").write_text(
+            self.INSTALLER.format(id=package, version=version, type=kind, sha="AB" * 32)
+        )
+        (folder / f"{package}.yaml").write_text(f"PackageIdentifier: {package}\nPackageVersion: {version}\nDefaultLocale: en-US\n")
+        (folder / f"{package}.locale.en-US.yaml").write_text(
+            f"PackageIdentifier: {package}\nPackageName: {name}\nShortDescription: Does things\nLicense: MIT\n"
+            "PackageUrl: https://example.org/\nTags:\n- games\n- Utilities\n- unrelated\n- game\n"
+        )
+
+    def test_newest_version_per_package(self):
+        files = [
+            "manifests/e/Ex/App/1.9.0/Ex.App.installer.yaml",
+            "manifests/e/Ex/App/1.10.0/Ex.App.installer.yaml",
+            "manifests/e/Ex/App/1.10.0/Ex.App.yaml",
+            "manifests/o/Other/Tool/2024.1/Other.Tool.installer.yaml",
+        ]
+        self.assertEqual(newest_version_dirs(files), ["manifests/e/Ex/App/1.10.0", "manifests/o/Other/Tool/2024.1"])
+
+    def test_picks_x64_with_silent_switches_and_dependencies(self):
+        manifest = yaml.safe_load(self.INSTALLER.format(id="Ex.App", version="1", type="nullsoft", sha="ab" * 32))
+        installer = pick_installer(manifest)
+        self.assertEqual((installer["arch"], installer["url"]), ("x64", "https://example.org/x64.exe"))
+        self.assertEqual(installer["args"], ["/S", "/NORESTART"])
+        spec = make_recipe("Ex.App", "Ex.App", "Example", "1", installer)
+        self.assertEqual(spec["steps"], [{"winetricks": ["vcrun2022"]}, {"run_installer": {"args": ["/S", "/NORESTART"]}}])
+        self.assertNotIn("launchers", spec)
+        self.assertEqual(spec["installer"]["file_name"], "Ex-App-setup.exe")
+
+    def test_skips_what_wine_cant_run(self):
+        msix = yaml.safe_load(self.INSTALLER.format(id="Ex.App", version="1", type="msix", sha="ab" * 32))
+        self.assertIsNone(pick_installer(msix))
+        # An unknown .exe without silent switches would wait for clicks.
+        exe = yaml.safe_load(self.INSTALLER.format(id="Ex.App", version="1", type="exe", sha="ab" * 32).replace("  Custom: /NORESTART\n", "  Custom: ''\n"))
+        self.assertIsNone(pick_installer(exe))
+
+    def test_portable_apps_are_copied_and_get_a_launcher(self):
+        manifest = yaml.safe_load(self.INSTALLER.format(id="Ex.Tool", version="1", type="portable", sha="ab" * 32))
+        spec = make_recipe("Ex.Tool", "Ex.Tool", "Tool", "1", pick_installer(manifest))
+        self.assertEqual(spec["steps"][-1], {"copy": {"from": "Ex-Tool.exe", "to": "C:\\Program Files\\Ex-Tool\\Ex-Tool.exe"}})
+        self.assertEqual(spec["launchers"], [{"name": "Tool", "exe": "C:\\Program Files\\Ex-Tool\\Ex-Tool.exe"}])
+
+    def test_ingest_creates_apps_and_untested_recipes(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_package(root, "Example.Editor", name="Example Editor")
+            self.write_package(root, "7zip.7zip", kind="inno", name="7-Zip")
+            self.write_package(root, "Store.Only", kind="msix")
+            # Linked to an existing app through its winget source.
+            App.objects.create(id="org.example.Linked", name="Linked")
+            Source.objects.create(app_id="org.example.Linked", kind="winget", ref="Example.Linked", platforms=["windows"], origin="manual")
+            self.write_package(root, "Example.Linked", kind="msi")
+
+            counts = ingest_winget(root / "manifests", "a" * 40)
+            self.assertEqual((counts["recipes"], counts["apps"], counts["skipped"]), (3, 2, 1))
+
+            editor = App.objects.get(pk="Example.Editor")
+            self.assertEqual((editor.name, editor.summary, editor.winget_id), ("Example Editor", "Does things", "Example.Editor"))
+            self.assertEqual(editor.categories, ["Game", "Utility"])
+            recipe = editor.recipes.get()
+            self.assertEqual((recipe.id, recipe.status), ("winget.Example.Editor", "untested"))
+            self.assertEqual(editor.sources.get().platforms, ["windows"])
+            # Ids that aren't valid app ids get a prefix.
+            self.assertTrue(App.objects.filter(pk="winget.7zip.7zip").exists())
+            linked = Recipe.objects.get(app_id="org.example.Linked")
+            self.assertEqual(linked.current_revision.spec["installer"]["file_name"], "Example-Linked-setup.msi")
+
+            # The same app on Linux (same name and website) gets the recipe instead of a twin.
+            App.objects.create(id="org.example.Twin", name="Twin App", homepage="https://www.example.org/")
+            App.objects.create(id="org.other.Twin", name="Twin App", homepage="https://github.com/other/twin")
+            self.write_package(root, "Example.Twin", name="Twin App")
+            self.write_package(root, "Example.Twin.Beta", name="Twin App")
+            ingest_winget(root / "manifests", "a" * 40)
+            self.assertFalse(App.objects.filter(pk__startswith="Example.Twin").exists())
+            twin = App.objects.get(pk="org.example.Twin")
+            self.assertEqual(sorted(twin.recipes.values_list("id", flat=True)), ["winget.Example.Twin", "winget.Example.Twin.Beta"])
+            self.assertEqual(twin.winget_id, "Example.Twin")
+            self.assertFalse(App.objects.get(pk="org.other.Twin").recipes.exists())
+
+            # Packages that leave winget have their recipes retired.
+            shutil.rmtree(root / "manifests" / "e" / "Example" / "Editor")
+            counts = ingest_winget(root / "manifests", "b" * 40)
+            self.assertEqual(counts["retired"], 1)
+            self.assertEqual(Recipe.objects.get(pk="winget.Example.Editor").status, "retired")
+
+    def test_index_for_older_clients(self):
+        app = App.objects.create(id="Example.WinOnly", name="Win Only")
+        Source.objects.create(app=app, kind="winget", ref="Example.WinOnly", platforms=["windows"], origin="winget")
+        Recipe.objects.create(id="winget.Example.WinOnly", app=app, runtime="wine", status="untested", path="x")
+        index_recipe(
+            {"schema_version": 1, "id": "winget.Example.WinOnly", "app": "Example.WinOnly", "runtime": "wine",
+             "installer": {"type": "download", "url": "https://example.org/x.exe", "sha256": "a" * 64},
+             "steps": [{"run_installer": {"args": ["/S"]}}]},
+            path="winget-pkgs:x", git_commit="a" * 40, from_file=False,
+        )
+        Recipe.objects.filter(pk="winget.Example.WinOnly").update(status="untested")
+        self.assertIn("Example.WinOnly", {a["id"] for a in build_index()["apps"]})
+        legacy = {a["id"] for a in build_index(exclude_statuses=["untested"], exclude_kinds=["winget"])["apps"]}
+        self.assertNotIn("Example.WinOnly", legacy)
+
+    def test_sites(self):
+        self.assertEqual(site("https://www.GIMP.org/downloads"), "gimp.org")
+        self.assertEqual(site("https://github.com/Owner/Repo/releases"), "github.com/owner/repo")
+        self.assertEqual(site("https://github.com/"), "")
+        self.assertEqual(site("https://sourceforge.net/projects/foo/files"), "sourceforge.net/projects/foo")
+        self.assertEqual(site(""), "")

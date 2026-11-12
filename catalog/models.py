@@ -48,6 +48,7 @@ class App(models.Model):
     summary = models.CharField(max_length=255, blank=True)
     description = models.TextField(blank=True)
     icon_url = models.URLField(blank=True)
+    screenshots = models.JSONField(default=list, blank=True, help_text="Screenshot image URLs, best first.")
     homepage = models.URLField(blank=True)
     license = models.CharField(
         max_length=255, blank=True, help_text="SPDX expression, or LicenseRef-proprietary."
@@ -149,6 +150,7 @@ class Recipe(models.Model):
 
     class Status(models.TextChoices):
         DRAFT = "draft"
+        UNTESTED = "untested", "Untested (generated, offered with a warning)"
         COMMUNITY = "community"
         VERIFIED = "verified"
         RETIRED = "retired", "Retired (file removed; kept for report history)"

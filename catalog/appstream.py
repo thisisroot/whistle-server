@@ -294,7 +294,10 @@ def parse_appstream_rpm(raw) -> Iterable[Component]:
 
 
 def debian_urls(fetch):
-    return ["https://deb.debian.org/debian/dists/stable/main/dep11/Components-amd64.yml.gz"]
+    return [
+        f"https://deb.debian.org/debian/dists/stable/{c}/dep11/Components-amd64.yml.gz"
+        for c in ("main", "contrib", "non-free")
+    ]
 
 
 def ubuntu_urls(fetch):
@@ -305,7 +308,10 @@ def ubuntu_urls(fetch):
     if not match:
         raise ValueError("can't find the current Ubuntu LTS")
     dist = match.group(1)
-    return [f"https://archive.ubuntu.com/ubuntu/dists/{dist}/{c}/dep11/Components-amd64.yml.gz" for c in ("main", "universe")]
+    return [
+        f"https://archive.ubuntu.com/ubuntu/dists/{dist}/{c}/dep11/Components-amd64.yml.gz"
+        for c in ("main", "universe", "multiverse")
+    ]
 
 
 def arch_urls(fetch):
@@ -313,17 +319,21 @@ def arch_urls(fetch):
     versions = re.findall(r'href="(\d{8})/"', _text(fetch, base))
     if not versions:
         raise ValueError("can't find archlinux-appstream-data")
-    return [f"{base}{max(versions)}/extra/Components-x86_64.xml.gz"]
+    # core has no desktop apps; multilib has Steam.
+    return [f"{base}{max(versions)}/{repo}/Components-x86_64.xml.gz" for repo in ("extra", "multilib")]
 
 
 def opensuse_urls(fetch):
-    base = "https://download.opensuse.org/tumbleweed/repo/oss/"
-    repomd = ET.fromstring(fetch(base + "repodata/repomd.xml"))
-    ns = {"r": "http://linux.duke.edu/metadata/repo"}
-    location = repomd.find("r:data[@type='appdata']/r:location", ns)
-    if location is None:
-        raise ValueError("no appdata in the openSUSE repo")
-    return [base + location.get("href")]
+    urls = []
+    for repo in ("oss", "non-oss"):
+        base = f"https://download.opensuse.org/tumbleweed/repo/{repo}/"
+        repomd = ET.fromstring(fetch(base + "repodata/repomd.xml"))
+        ns = {"r": "http://linux.duke.edu/metadata/repo"}
+        location = repomd.find("r:data[@type='appdata']/r:location", ns)
+        if location is None:
+            raise ValueError(f"no appdata in the openSUSE {repo} repo")
+        urls.append(base + location.get("href"))
+    return urls
 
 
 def fedora_urls(fetch):
@@ -435,11 +445,12 @@ def _create_distro_apps(candidates, existing_keys):
     created = 0
     for c in candidates:
         keys = _component_keys(c)
-        # Old-style ids like "homebank.desktop" keep their suffix: "homebank"
-        # alone isn't a valid app id, and the suffix is ignored when matching.
+        # Old-style ids like "homebank.desktop" keep their suffix, and bare
+        # ones like "qimgv" get it: a single word isn't a valid app id, and the
+        # suffix is ignored when matching.
         app_id = c.id.removesuffix(".desktop")
         if not REVERSE_DNS.match(app_id):
-            app_id = c.id
+            app_id = f"{app_id}.desktop"
         if keys & existing_keys or not REVERSE_DNS.match(app_id) or not c.name or not PACKAGE.match(c.package):
             continue
         App.objects.create(

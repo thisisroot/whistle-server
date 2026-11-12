@@ -54,6 +54,9 @@ class App(models.Model):
         max_length=255, blank=True, help_text="SPDX expression, or LicenseRef-proprietary."
     )
     categories = models.JSONField(default=list, blank=True, help_text="freedesktop categories.")
+    popularity = models.PositiveSmallIntegerField(
+        default=0, help_text="0-1000: how widely it's used, from Flathub installs and Debian's popcon."
+    )
 
     # Cross-references used by ingest to match the same app across sources.
     appstream_id = models.CharField(max_length=255, blank=True)

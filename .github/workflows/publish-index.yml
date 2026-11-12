@@ -47,6 +47,8 @@ jobs:
           uv run python manage.py index_recipes "$WHISTLE_RECIPES_DIR" --status-file seed/recipe-status.json
           # After the hand-written recipes, which win over generated ones.
           uv run python manage.py ingest_winget "$RUNNER_TEMP/winget-pkgs"
+          # Last, so every app is rated.
+          uv run python manage.py ingest_popularity
           # catalog.json is the full catalog. Whistle 0.1 reads index.json, and
           # rejects recipe statuses it doesn't know, so that one leaves out the
           # generated recipes, and the Windows-only apps they were for.

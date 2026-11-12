@@ -12,7 +12,7 @@ from django.utils import timezone
 from .models import App, Recipe, Source
 
 FORMAT = 1
-APP_FIELDS = ["name", "summary", "categories", "icon_url", "screenshots", "homepage", "license"]
+APP_FIELDS = ["name", "summary", "categories", "icon_url", "screenshots", "homepage", "license", "popularity"]
 SOURCE_FIELDS = ["platforms", "arches", "version", "url", "sha256"]
 
 

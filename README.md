@@ -48,20 +48,22 @@ flowchart LR
     A["Distro AppStream data<br/>Debian · Ubuntu · Arch<br/>Fedora · openSUSE"] --> DB
     R["whistle-recipes"] --> DB
     W["winget-pkgs<br/>Windows apps"] --> DB
+    P["Flathub installs<br/>Debian popcon"] --> DB
     DB --> I["catalog.json"]
     I --> G["GitHub release 'index'"]
     G --> C["whistle update"]
 ```
 
-The catalog is rebuilt from scratch every time, from five sources:
+The catalog is rebuilt from scratch every time, from these sources:
 
 1. **`seed/apps.json`**: hand-maintained apps and their package names (apt,
    pacman, dnf, zypper, winget). Always wins over imported data.
 2. **Flathub**: every app, with its name, icon, summary, homepage, screenshots
    and Flatpak ref. It only fills in what's missing.
 3. **The distros' own AppStream metadata**: the package that ships each app on
-   Debian, Ubuntu, Arch, Fedora and openSUSE, plus the desktop apps that only
-   the distros ship, with their icons and screenshots. Apps are matched by their
+   Debian (main, contrib, non-free), Ubuntu (main, universe, multiverse), Arch
+   (extra, multilib), Fedora and openSUSE (oss, non-oss), plus the desktop apps
+   that only the distros ship, with their icons and screenshots. Apps are matched by their
    AppStream ID (like `org.gimp.GIMP`), never by name, so a different program
    that happens to share a name is never picked. If a distro's feed is down, that
    distro keeps its previous data.
@@ -74,6 +76,10 @@ The catalog is rebuilt from scratch every time, from five sources:
    history: about 60,000 small files, in under a minute. A Windows app joins the
    Linux entry of the same app when both the name and the website match, and a
    reviewed recipe always wins over a generated one.
+6. **Popularity**, so search can put the apps people want first: Flathub's
+   installs over the last month, and Debian's
+   [popularity contest](https://popcon.debian.org) for distro packages. Each is
+   scaled from 0 to 1000 on a log scale, and an app gets the higher of the two.
 
 The [Publish index](.github/workflows/publish-index.yml) workflow runs the
 tests, builds the catalog, signs it and uploads it to the
@@ -153,6 +159,7 @@ package or the `zstd` command.
 | `ingest_appstream [--only FEED...] [--strict]` | Add native packages, distro-only apps, icons and screenshots from the distros' AppStream data. `--strict` fails if any feed fails. |
 | `index_recipes <repo> [--status-file F]` | Index every recipe in a whistle-recipes checkout. |
 | `ingest_winget <dir> [--no-update] [--limit N]` | Clone or update winget-pkgs in `<dir>`, and generate `untested` recipes for its Windows apps. |
+| `ingest_popularity` | Rate every app from Flathub installs and Debian's popcon. |
 | `build_index <file> [--exclude-status S] [--exclude-kind K]` | Write the index clients download; the exclusions make the one for older clients. |
 
 ## Settings
@@ -175,6 +182,7 @@ package or the `zstd` command.
 | [`catalog/ingest.py`](catalog/ingest.py) | The Flathub import. |
 | [`catalog/appstream.py`](catalog/appstream.py) | The AppStream import: DEP-11, AppStream XML and Fedora's RPM; icons and screenshots. |
 | [`catalog/winget.py`](catalog/winget.py) | The winget import: picking an installer and generating its recipe. |
+| [`catalog/popularity.py`](catalog/popularity.py) | How widely each app is used. |
 | [`catalog/recipes.py`](catalog/recipes.py) | Validate a recipe and store it as a revision. |
 | [`accounts/`](accounts) | Users, for contributors and compatibility reports. Installing apps never needs an account. |
 | [`seed/`](seed) | The hand-maintained part of the catalog. |

@@ -17,6 +17,7 @@ from .appstream import Feed, ingest_appstream, parse_appstream_rpm, parse_appstr
 from .index import build_index, import_index
 from .ingest import ingest_flathub
 from .models import App, CompatReport, Recipe, Source
+from .popularity import ingest_popularity, scaled
 from .recipes import RecipeInvalid, index_recipe
 from .winget import ingest_winget, make_recipe, newest_version_dirs, pick_installer, site
 
@@ -301,6 +302,12 @@ Package: homebank
 Name:
   C: HomeBank
 ---
+Type: desktop-application
+ID: qimgv
+Package: qimgv
+Name:
+  C: qimgv
+---
 Type: addon
 ID: org.example.NoPackage
 """
@@ -377,8 +384,9 @@ class AppStreamParserTests(TestCase):
             ("org.example.Quoted.desktop", "quoted-app", []),
             ("org.example.DistroOnly", "distro-only", []),
             ("homebank.desktop", "homebank", []),
+            ("qimgv", "qimgv", []),
         ])
-        gimp, _, only, _ = parsed
+        gimp, _, only, _, _ = parsed
         self.assertEqual((gimp.type, gimp.name, gimp.homepage), ("desktop-application", "GNU Image Manipulation Program", "https://www.gimp.org/"))
         self.assertEqual((only.name, only.summary, only.license), ("Distro Only", "Only in the distro's repos", "GPL-2.0+"))
         self.assertEqual(only.categories, ["Utility", "Bad Category"])
@@ -436,7 +444,7 @@ class AppStreamIngestTests(TestCase):
 
     def test_matches_by_component_and_desktop_id(self):
         results = ingest_appstream(self.feeds(), fetch=self.fetch)
-        self.assertEqual(results, {"new apps": 2, "media": 1, "debian": 3, "ubuntu": 3, "arch": 2})
+        self.assertEqual(results, {"new apps": 3, "media": 1, "debian": 4, "ubuntu": 4, "arch": 2})
         gimp_apt = Source.objects.get(app_id="org.gimp.GIMP", kind="apt")
         self.assertEqual((gimp_apt.ref, gimp_apt.platforms, gimp_apt.origin), ("gimp", ["linux:debian", "linux:ubuntu"], "appstream"))
         # Matched through the launchable desktop id.
@@ -452,12 +460,13 @@ class AppStreamIngestTests(TestCase):
         self.assertEqual(app.sources.get().platforms, ["linux:debian", "linux:ubuntu"])
         # Known apps aren't duplicated, nameless components and invalid packages aren't added.
         self.assertFalse(App.objects.filter(pk__in=["firefox", "org.example.Quoted"]).exists())
-        # Old-style ids keep their .desktop suffix.
+        # Old-style ids keep their .desktop suffix, and bare ones get it.
         self.assertEqual(App.objects.get(pk="homebank.desktop").sources.get().ref, "homebank")
-        self.assertEqual(App.objects.count(), 5)
+        self.assertEqual(App.objects.get(pk="qimgv.desktop").sources.get().ref, "qimgv")
+        self.assertEqual(App.objects.count(), 6)
         # A second run finds the apps it created instead of adding them again.
         ingest_appstream(self.feeds(), fetch=self.fetch)
-        self.assertEqual(App.objects.count(), 5)
+        self.assertEqual(App.objects.count(), 6)
 
     def test_fills_missing_media_without_overwriting(self):
         App.objects.filter(pk="org.gimp.GIMP").update(icon_url="https://curated.example.org/gimp.png")
@@ -617,3 +626,61 @@ ManifestType: installer
         self.assertEqual(site("https://github.com/"), "")
         self.assertEqual(site("https://sourceforge.net/projects/foo/files"), "sourceforge.net/projects/foo")
         self.assertEqual(site(""), "")
+
+
+class PopularityTests(TestCase):
+    def setUp(self):
+        for app_id, name in [
+            ("com.visualstudio.code", "Visual Studio Code"),
+            ("org.gimp.GIMP", "GIMP"),
+            ("io.elementary.code", "Code"),
+            ("org.example.Rare", "Rare"),
+        ]:
+            App.objects.create(id=app_id, name=name)
+        Source.objects.create(app_id="org.gimp.GIMP", kind="apt", ref="gimp", platforms=["linux:debian"])
+        Source.objects.create(app_id="io.elementary.code", kind="apt", ref="io.elementary.code", platforms=["linux:debian"])
+        flathub = {
+            "hits": [
+                {"app_id": "com.visualstudio.code", "installs_last_month": 56000},
+                {"app_id": "org.gimp.GIMP", "installs_last_month": 90000},
+                {"app_id": "org.example.Rare", "installs_last_month": 10},
+                {"app_id": "org.not.InTheCatalog", "installs_last_month": 999999},
+            ],
+            "totalPages": 1,
+        }
+        popcon = "#rank name inst vote\n1 libc6 300000 1\n2 gimp 40000 1\n3 io.elementary.code 50 1\n"
+        self.files = {
+            "https://flathub.org/api/v2/collection/popular?page=1&per_page=250": json.dumps(flathub).encode(),
+            "https://popcon.debian.org/by_inst.gz": __import__("gzip").compress(popcon.encode()),
+        }
+
+    def fetch(self, url):
+        if url not in self.files:
+            raise OSError(f"404 {url}")
+        return self.files[url]
+
+    def test_scaled(self):
+        self.assertEqual(scaled({"a": 1, "b": 5, "c": 9, "z": 0}), {"a": 301, "b": 778, "c": 1000, "z": 0})
+        self.assertEqual(scaled({"a": 0}), {"a": 0})
+
+    def test_rates_apps_from_both_sources(self):
+        results = ingest_popularity(fetch=self.fetch)
+        self.assertEqual(results, {"flathub": 3, "popcon": 2})
+        score = dict(App.objects.values_list("id", "popularity"))
+        # Scaled against the catalog's apps and packages, not all of Flathub or Debian.
+        self.assertEqual(score["org.gimp.GIMP"], 1000)
+        self.assertEqual(score["com.visualstudio.code"], 958)
+        self.assertEqual(score["org.example.Rare"], 210)
+        self.assertEqual(score["io.elementary.code"], 371)
+        self.assertGreater(score["com.visualstudio.code"], score["io.elementary.code"])
+
+    def test_a_failing_source_is_skipped(self):
+        del self.files["https://popcon.debian.org/by_inst.gz"]
+        results = ingest_popularity(fetch=self.fetch)
+        self.assertTrue(results["popcon"].startswith("failed"))
+        self.assertEqual(App.objects.get(pk="org.gimp.GIMP").popularity, 1000)
+
+    def test_published_in_the_index(self):
+        App.objects.filter(pk="org.gimp.GIMP").update(popularity=812)
+        apps = {a["id"]: a for a in build_index()["apps"]}
+        self.assertEqual(apps["org.gimp.GIMP"]["popularity"], 812)

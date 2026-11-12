@@ -154,7 +154,8 @@ class IndexTests(TestCase):
 
     def test_seed_imports_as_manual(self):
         firefox = App.objects.get(pk="org.mozilla.firefox")
-        self.assertEqual(firefox.sources.get(kind="apt").platforms, ["linux:debian", "linux:ubuntu"])
+        apt = {s.ref: s.platforms for s in firefox.sources.filter(kind="apt")}
+        self.assertEqual(apt, {"firefox-esr": ["linux:debian"], "firefox": ["linux:ubuntu"]})
         self.assertTrue(all(s.origin == "manual" for s in Source.objects.all()))
 
     def test_reimport_is_idempotent(self):

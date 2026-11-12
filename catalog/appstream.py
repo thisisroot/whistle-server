@@ -387,7 +387,8 @@ def build_lookup(components: Iterable[Component]):
     return lookup
 
 
-REVERSE_DNS = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$")
+# Like the App model's ids: reverse-DNS, or a menu entry name ("3dchess.desktop").
+REVERSE_DNS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_+-]*(\.[A-Za-z0-9_+-]+)+$")
 CATEGORY = re.compile(r"^[A-Za-z0-9-]+$")
 
 

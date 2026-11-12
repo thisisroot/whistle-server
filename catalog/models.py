@@ -4,8 +4,10 @@ from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Q
 
+# Reverse-DNS, or an old-style menu entry name like "3dchess.desktop" or
+# "xgalaga++.desktop", which may start with a digit or contain "+".
 reverse_dns = RegexValidator(
-    r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$",
+    r"^[A-Za-z0-9][A-Za-z0-9_+-]*(\.[A-Za-z0-9_+-]+)+$",
     "Use a reverse-DNS id, e.g. org.gimp.GIMP.",
 )
 sha256_hex = RegexValidator(r"^[0-9a-f]{64}$", "Lowercase hex SHA-256.")

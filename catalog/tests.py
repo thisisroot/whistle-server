@@ -34,6 +34,11 @@ class AppTests(TestCase):
         with self.assertRaises(ValidationError):
             App(id="firefox", name="Firefox").full_clean()
         App(id="org.mozilla.firefox", name="Firefox").full_clean()
+        App(id="3dchess.desktop", name="3D Chess").full_clean()
+        App(id="tintin++.desktop", name="TinTin++").full_clean()
+        for bad in ["-x.desktop", "a..b", "a b.c", "a.b/c"]:
+            with self.assertRaises(ValidationError):
+                App(id=bad, name="X").full_clean()
 
     def test_blank_winget_ids_dont_collide(self):
         App.objects.create(id="org.a.A", name="A")
@@ -308,6 +313,12 @@ Package: qimgv
 Name:
   C: qimgv
 ---
+Type: desktop-application
+ID: xgalaga++
+Package: xgalaga++
+Name:
+  C: XGalaga++
+---
 Type: addon
 ID: org.example.NoPackage
 """
@@ -385,8 +396,9 @@ class AppStreamParserTests(TestCase):
             ("org.example.DistroOnly", "distro-only", []),
             ("homebank.desktop", "homebank", []),
             ("qimgv", "qimgv", []),
+            ("xgalaga++", "xgalaga++", []),
         ])
-        gimp, _, only, _, _ = parsed
+        gimp, _, only, _, _, _ = parsed
         self.assertEqual((gimp.type, gimp.name, gimp.homepage), ("desktop-application", "GNU Image Manipulation Program", "https://www.gimp.org/"))
         self.assertEqual((only.name, only.summary, only.license), ("Distro Only", "Only in the distro's repos", "GPL-2.0+"))
         self.assertEqual(only.categories, ["Utility", "Bad Category"])
@@ -444,7 +456,7 @@ class AppStreamIngestTests(TestCase):
 
     def test_matches_by_component_and_desktop_id(self):
         results = ingest_appstream(self.feeds(), fetch=self.fetch)
-        self.assertEqual(results, {"new apps": 3, "media": 1, "debian": 4, "ubuntu": 4, "arch": 2})
+        self.assertEqual(results, {"new apps": 4, "media": 1, "debian": 5, "ubuntu": 5, "arch": 2})
         gimp_apt = Source.objects.get(app_id="org.gimp.GIMP", kind="apt")
         self.assertEqual((gimp_apt.ref, gimp_apt.platforms, gimp_apt.origin), ("gimp", ["linux:debian", "linux:ubuntu"], "appstream"))
         # Matched through the launchable desktop id.
@@ -463,10 +475,12 @@ class AppStreamIngestTests(TestCase):
         # Old-style ids keep their .desktop suffix, and bare ones get it.
         self.assertEqual(App.objects.get(pk="homebank.desktop").sources.get().ref, "homebank")
         self.assertEqual(App.objects.get(pk="qimgv.desktop").sources.get().ref, "qimgv")
-        self.assertEqual(App.objects.count(), 6)
+        # Menu entry names may contain "+" (and start with a digit).
+        self.assertEqual(App.objects.get(pk="xgalaga++.desktop").sources.get().ref, "xgalaga++")
+        self.assertEqual(App.objects.count(), 7)
         # A second run finds the apps it created instead of adding them again.
         ingest_appstream(self.feeds(), fetch=self.fetch)
-        self.assertEqual(App.objects.count(), 6)
+        self.assertEqual(App.objects.count(), 7)
 
     def test_fills_missing_media_without_overwriting(self):
         App.objects.filter(pk="org.gimp.GIMP").update(icon_url="https://curated.example.org/gimp.png")

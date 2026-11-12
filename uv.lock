@@ -259,7 +259,7 @@ wheels = [
 [[package]]
 name = "whistle-recipes"
 version = "0.1.0"
-source = { git = "https://github.com/thisisroot/whistle-recipes.git?branch=main#72e84ef8e9218a8e04e0fed6dae750db0a325aea" }
+source = { git = "https://github.com/thisisroot/whistle-recipes.git?branch=main#e527e5b5b9924505a9f7feea68f7092948eecd1d" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },

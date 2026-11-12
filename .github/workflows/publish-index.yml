@@ -25,14 +25,14 @@ jobs:
       WHISTLE_RECIPES_DIR: ${{ github.workspace }}/whistle-recipes
       WHISTLE_SQLITE_PATH: ${{ github.workspace }}/catalog.sqlite3
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           repository: thisisroot/whistle-recipes
           path: whistle-recipes
-      - uses: astral-sh/setup-uv@v6
-      # Fedora's AppStream data comes in a zstd-compressed RPM.
-      - run: command -v zstd || sudo apt-get install -y zstd
+      - uses: astral-sh/setup-uv@v10
+      # Fedora's AppStream data comes in a zstd-compressed RPM; minisign signs the index.
+      - run: sudo apt-get update && sudo apt-get install -y zstd minisign
       - run: uv sync --locked
 
       - name: Test
@@ -47,11 +47,27 @@ jobs:
           uv run python manage.py index_recipes "$WHISTLE_RECIPES_DIR" --status-file seed/recipe-status.json
           uv run python manage.py build_index index.json
 
+      # Clients refuse an index that isn't signed with the key built into them
+      # (keys/index.pub here).
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::The MINISIGN_SECRET_KEY secret is not set"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/index.key"
+          (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
+          minisign -S -s "$key" -m index.json -t "whistle catalog index"
+          shred -u "$key"
+          minisign -V -p keys/index.pub -m index.json
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view index >/dev/null 2>&1 || gh release create index \
             --title "Catalog index" --latest=false \
-            --notes "Rebuilt automatically. Clients fetch index.json from here."
-          gh release upload index index.json --clobber
+            --notes "Rebuilt automatically. Clients fetch index.json and its signature from here."
+          gh release upload index index.json index.json.minisig --clobber

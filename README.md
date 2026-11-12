@@ -65,8 +65,23 @@ The catalog is rebuilt from scratch every time, from four sources:
    recipe per app, with its review status from `seed/recipe-status.json`.
 
 The [Publish index](.github/workflows/publish-index.yml) workflow runs the
-tests, builds the catalog and uploads `index.json` to the
+tests, builds the catalog, signs it and uploads `index.json` and
+`index.json.minisig` to the
 [`index` release](https://github.com/thisisroot/whistle-server/releases/tag/index).
+
+### Signing
+
+Clients only accept a catalog signed with [minisign](https://jedisct1.github.io/minisign/)
+by the key built into them. The public key is [`keys/index.pub`](keys/index.pub);
+the workflow signs with the `MINISIGN_SECRET_KEY` repository secret and fails
+if it isn't set. To check a catalog yourself:
+
+```sh
+minisign -V -p keys/index.pub -m index.json
+```
+
+To publish your own catalog, generate a key pair with `minisign -G`, sign with
+it, and point clients at it with `WHISTLE_INDEX_URL` and `WHISTLE_INDEX_PUBKEY`.
 
 ## Contributing to the catalog
 

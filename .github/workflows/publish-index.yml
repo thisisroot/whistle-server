@@ -30,7 +30,7 @@ jobs:
         with:
           repository: thisisroot/whistle-recipes
           path: whistle-recipes
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
       # Fedora's AppStream data comes in a zstd-compressed RPM; minisign signs the index.
       - run: sudo apt-get update && sudo apt-get install -y zstd minisign
       - run: uv sync --locked
